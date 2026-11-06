@@ -1,4 +1,3 @@
-
 import os
 import sqlite3
 import secrets
@@ -12,10 +11,12 @@ from flask import (
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
-from database import init_db, get_db
+from database import init_db, get_db, close_db
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 UPLOAD_FOLDER = os.path.join(app.root_path, "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -23,6 +24,8 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
 
 ALLOWED_EXTENSIONS = {"pdf", "txt", "doc", "docx", "png", "jpg", "jpeg"}
+
+app.teardown_appcontext(close_db)
 
 
 def allowed_file(filename):
@@ -68,7 +71,6 @@ def can_access_document(user_id, document_id, required="read"):
 
     if not document:
         return False
-
     if document["owner_id"] == user_id:
         return True
 
@@ -80,10 +82,8 @@ def can_access_document(user_id, document_id, required="read"):
 
     if not permission:
         return False
-
     if required == "edit":
         return permission["permission"] == "edit"
-
     return permission["permission"] in ("read", "edit")
 
 
@@ -156,7 +156,6 @@ def logout():
 def dashboard():
     db = get_db()
     user_id = session["user_id"]
-
     documents = db.execute(
         """SELECT DISTINCT d.* FROM documents d
            LEFT JOIN permissions p ON d.id = p.document_id
@@ -164,28 +163,20 @@ def dashboard():
            ORDER BY d.created_at DESC""",
         (user_id, user_id)
     ).fetchall()
-
     users = db.execute(
         "SELECT id, username FROM users WHERE id != ?",
         (user_id,)
     ).fetchall()
-
-    return render_template(
-        "dashboard.html",
-        documents=documents,
-        users=users
-    )
+    return render_template("dashboard.html", documents=documents, users=users)
 
 
 @app.route("/upload", methods=["POST"])
 @login_required
 def upload():
     file = request.files.get("file")
-
     if not file or not file.filename:
         flash("Choose a file to upload.")
         return redirect(url_for("dashboard"))
-
     if not allowed_file(file.filename):
         flash("File type not allowed.")
         return redirect(url_for("dashboard"))
@@ -200,20 +191,12 @@ def upload():
            (owner_id, original_name, stored_name, created_at)
            VALUES (?, ?, ?, ?)""",
         (
-            session["user_id"],
-            original_name,
-            stored_name,
+            session["user_id"], original_name, stored_name,
             datetime.now().isoformat(timespec="seconds")
         )
     )
     db.commit()
-
-    log_action(
-        session["user_id"],
-        "upload",
-        cursor.lastrowid,
-        original_name
-    )
+    log_action(session["user_id"], "upload", cursor.lastrowid, original_name)
     flash("Document uploaded.")
     return redirect(url_for("dashboard"))
 
@@ -227,17 +210,12 @@ def download(document_id):
 
     db = get_db()
     document = db.execute(
-        "SELECT * FROM documents WHERE id = ?",
-        (document_id,)
+        "SELECT * FROM documents WHERE id = ?", (document_id,)
     ).fetchone()
-
     log_action(session["user_id"], "download", document_id)
-
     return send_from_directory(
-        UPLOAD_FOLDER,
-        document["stored_name"],
-        as_attachment=True,
-        download_name=document["original_name"]
+        UPLOAD_FOLDER, document["stored_name"],
+        as_attachment=True, download_name=document["original_name"]
     )
 
 
@@ -245,22 +223,18 @@ def download(document_id):
 @login_required
 def share(document_id):
     user_id = session["user_id"]
-
     if not can_access_document(user_id, document_id, "edit"):
         abort(403)
 
     target_id = request.form.get("user_id", type=int)
     permission = request.form.get("permission", "read")
-
-    if permission not in ("read", "edit"):
+    if permission not in ("read", "edit") or target_id == user_id:
         abort(400)
 
     db = get_db()
     target = db.execute(
-        "SELECT id FROM users WHERE id = ?",
-        (target_id,)
+        "SELECT id FROM users WHERE id = ?", (target_id,)
     ).fetchone()
-
     if not target:
         flash("User not found.")
         return redirect(url_for("dashboard"))
@@ -273,13 +247,8 @@ def share(document_id):
         (document_id, target_id, permission)
     )
     db.commit()
-
-    log_action(
-        user_id,
-        "share",
-        document_id,
-        f"Shared with user {target_id}: {permission}"
-    )
+    log_action(user_id, "share", document_id,
+               f"Shared with user {target_id}: {permission}")
     flash("Permission updated.")
     return redirect(url_for("dashboard"))
 
@@ -288,7 +257,6 @@ def share(document_id):
 @login_required
 def revoke(document_id, target_id):
     user_id = session["user_id"]
-
     if not can_access_document(user_id, document_id, "edit"):
         abort(403)
 
@@ -298,13 +266,8 @@ def revoke(document_id, target_id):
         (document_id, target_id)
     )
     db.commit()
-
-    log_action(
-        user_id,
-        "revoke",
-        document_id,
-        f"Revoked access from user {target_id}"
-    )
+    log_action(user_id, "revoke", document_id,
+               f"Revoked access from user {target_id}")
     flash("Access revoked.")
     return redirect(url_for("dashboard"))
 
@@ -316,9 +279,10 @@ def audit():
     logs = db.execute(
         """SELECT a.*, u.username FROM audit_logs a
            LEFT JOIN users u ON a.user_id = u.id
-           ORDER BY a.id DESC LIMIT 200"""
+           WHERE a.user_id = ?
+           ORDER BY a.id DESC LIMIT 200""",
+        (session["user_id"],)
     ).fetchall()
-
     return render_template("audit.html", logs=logs)
 
 
