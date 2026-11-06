@@ -1,6 +1,11 @@
 import io
+import sys
+from pathlib import Path
 
 import pytest
+
+# Ensure the repository root is importable when pytest collects this file.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import database
 from app import app
