@@ -127,3 +127,31 @@ def test_disallowed_file_extension_is_rejected(client):
     response = upload_text_file(client, filename="malware.exe")
     assert response.status_code == 200
     assert b"File type not allowed" in response.data
+
+def test_shared_editor_cannot_change_sharing_or_revoke_access(client):
+    register(client, "alice")
+    register(client, "bob")
+    register(client, "charlie")
+
+    login(client, "alice")
+    upload_text_file(client)
+    client.post(
+        "/share/1",
+        data={"user_id": "2", "permission": "edit"},
+        follow_redirects=True,
+    )
+    client.post(
+        "/share/1",
+        data={"user_id": "3", "permission": "read"},
+        follow_redirects=True,
+    )
+
+    client.get("/logout")
+    login(client, "bob")
+    # Edit permission allows document access, but only the owner manages sharing.
+    assert client.post(
+        "/share/1",
+        data={"user_id": "3", "permission": "edit"},
+    ).status_code == 403
+    assert client.post("/revoke/1/3").status_code == 403
+
