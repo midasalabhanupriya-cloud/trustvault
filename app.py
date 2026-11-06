@@ -266,7 +266,7 @@ def share(document_id):
 @login_required
 def revoke(document_id, target_id):
     user_id = session["user_id"]
-    if not can_access_document(user_id, document_id, "edit"):
+    if not is_document_owner(user_id, document_id):
         abort(403)
 
     db = get_db()
