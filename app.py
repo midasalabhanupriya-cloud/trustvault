@@ -62,6 +62,15 @@ def log_action(user_id, action, document_id=None, details=""):
     db.commit()
 
 
+def is_document_owner(user_id, document_id):
+    """Return True only for the document's owner."""
+    document = get_db().execute(
+        "SELECT owner_id FROM documents WHERE id = ?",
+        (document_id,)
+    ).fetchone()
+    return bool(document and document["owner_id"] == user_id)
+
+
 def can_access_document(user_id, document_id, required="read"):
     db = get_db()
     document = db.execute(
@@ -223,7 +232,7 @@ def download(document_id):
 @login_required
 def share(document_id):
     user_id = session["user_id"]
-    if not can_access_document(user_id, document_id, "edit"):
+    if not is_document_owner(user_id, document_id):
         abort(403)
 
     target_id = request.form.get("user_id", type=int)
