@@ -70,6 +70,16 @@ trustvault/
    ```
 7. Open http://127.0.0.1:5000 in your browser.
 
+## Run automated tests
+
+Install the project dependencies (including pytest) and run:
+
+```bash
+pytest -q
+```
+
+GitHub Actions runs this test suite automatically when changes are pushed to `main` or a pull request targets `main`. The tests use a temporary SQLite database and temporary upload folder, so they do not use real user data.
+
 ## Deploy on Render
 
 This repository includes a Render Blueprint file. In Render, create a new Blueprint deployment and select this repository. Set a strong `SECRET_KEY` environment variable in the service settings.
